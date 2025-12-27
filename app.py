@@ -15,16 +15,48 @@ st.set_page_config(
 )
 
 # ============================================================
-# LOAD MODEL & COMPONENTS
+# LOAD NAIVE BAYES MODEL & COMPONENTS
 # ============================================================
 @st.cache_resource
-def load_models():
+def load_naive_bayes_models():
     model = pickle.load(open('models/model.pkl', 'rb'))
     vectorizer = pickle.load(open('models/vectorizer.pkl', 'rb'))
     label_encoder = pickle.load(open('models/label_encoder.pkl', 'rb'))
     return model, vectorizer, label_encoder
 
-model, vectorizer, label_encoder = load_models()
+nb_model, vectorizer, label_encoder = load_naive_bayes_models()
+
+# ============================================================
+# LOAD INDOBERT MODEL
+# ============================================================
+@st.cache_resource
+def load_indobert_model():
+    try:
+        from transformers import pipeline, BertForSequenceClassification, BertTokenizer
+        import os
+        
+        local_model_path = "./models/indobert"
+        
+        # Cek apakah ada model fine-tuned lokal
+        if os.path.exists(local_model_path) and os.path.exists(os.path.join(local_model_path, "config.json")):
+            print("📂 Loading fine-tuned IndoBERT from local...")
+            model = BertForSequenceClassification.from_pretrained(local_model_path)
+            tokenizer = BertTokenizer.from_pretrained(local_model_path)
+            classifier = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
+            return classifier, True, "fine-tuned"
+        else:
+            # Pakai pre-trained dari HuggingFace
+            print("🌐 Loading pre-trained IndoBERT from HuggingFace...")
+            classifier = pipeline(
+                "sentiment-analysis",
+                model="mdhugol/indonesia-bert-sentiment-classification"
+            )
+            return classifier, True, "pre-trained"
+    except Exception as e:
+        print(f"❌ Error loading IndoBERT: {e}")
+        return None, False, None
+
+indobert_classifier, indobert_available, indobert_type = load_indobert_model()
 
 # ============================================================
 # LEXICON KATA SENTIMEN (dari analisis_sentimen.py)
@@ -54,7 +86,7 @@ except:
 def clean_youtube_comment(text):
     """Fungsi cleaning yang sama dengan di analisis_sentimen.py"""
     if not isinstance(text, str):
-        return ""
+        return "", []
     
     original_text = text
     steps = []
@@ -109,7 +141,31 @@ def find_sentiment_words(text, lexicon):
 # HEADER
 # ============================================================
 st.title("🎯 Analisis Sentimen MBG")
-st.markdown("**Makan Bergizi Gratis** - Analisis sentimen komentar menggunakan Naive Bayes + TF-IDF")
+st.markdown("**Makan Bergizi Gratis** - Analisis sentimen komentar")
+
+# ============================================================
+# MODEL SELECTOR (Dropdown sebelum tabs)
+# ============================================================
+st.markdown("---")
+
+col_model, col_info = st.columns([2, 3])
+
+with col_model:
+    model_options = ["Naive Bayes + TF-IDF"]
+    if indobert_available:
+        model_options.append("IndoBERT (Pre-trained)")
+    else:
+        model_options.append("IndoBERT (Tidak tersedia)")
+    
+    selected_model = st.selectbox(
+        "🤖 Pilih Model:",
+        model_options,
+        index=0,
+        help="Pilih model yang akan digunakan untuk analisis sentimen"
+    )
+
+
+
 st.markdown("---")
 
 # ============================================================
@@ -128,12 +184,55 @@ if 'probabilities' not in st.session_state:
     st.session_state.probabilities = None
 if 'original_text' not in st.session_state:
     st.session_state.original_text = None
+if 'model_used' not in st.session_state:
+    st.session_state.model_used = None
+
+# Emoji dan color maps
+emoji_map = {
+    'positif': '😊',
+    'positive': '😊',
+    'POSITIVE': '😊',
+    'LABEL_2': '😊',
+    'negatif': '😢',
+    'negative': '😢',
+    'NEGATIVE': '😢',
+    'LABEL_0': '😢',
+    'netral': '😐',
+    'neutral': '😐',
+    'NEUTRAL': '😐',
+    'LABEL_1': '😐'
+}
+
+color_map = {
+    'positif': 'green',
+    'positive': 'green',
+    'POSITIVE': 'green',
+    'LABEL_2': 'green',
+    'negatif': 'red',
+    'negative': 'red',
+    'NEGATIVE': 'red',
+    'LABEL_0': 'red',
+    'netral': 'orange',
+    'neutral': 'orange',
+    'NEUTRAL': 'orange',
+    'LABEL_1': 'orange'
+}
+
+# Label mapping untuk IndoBERT
+indobert_label_map = {
+    'LABEL_0': 'negatif',
+    'LABEL_1': 'netral',
+    'LABEL_2': 'positif'
+}
 
 # ============================================================
 # TAB 1: ANALISIS
 # ============================================================
 with tab1:
     st.header("📊 Analisis Sentimen")
+    
+    # Tampilkan model yang dipilih
+    st.caption(f"Model aktif: **{selected_model}**")
     
     # Input text
     user_input = st.text_area(
@@ -145,29 +244,55 @@ with tab1:
     # Tombol analisis
     if st.button("🔍 Analisis Sentimen", type="primary", use_container_width=True):
         if user_input.strip():
-            # Proses analisis
+            # Proses cleaning (untuk kedua model)
             cleaned_text, cleaning_steps = clean_youtube_comment(user_input)
             
-            # Vectorize
-            vector = vectorizer.transform([cleaned_text])
-            
-            # Predict
-            prediction = model.predict(vector)[0]
-            probabilities = model.predict_proba(vector)[0]
-            
-            # Decode label
-            label = label_encoder.inverse_transform([prediction])[0]
-            
-            # Simpan ke session state
-            st.session_state.original_text = user_input
-            st.session_state.cleaned_text = cleaned_text
-            st.session_state.cleaning_steps = cleaning_steps
-            st.session_state.probabilities = probabilities
-            st.session_state.analysis_result = {
-                'label': label,
-                'confidence': max(probabilities) * 100,
-                'prediction': prediction
-            }
+            if "Naive Bayes" in selected_model:
+                # ===== NAIVE BAYES =====
+                # Vectorize
+                vector = vectorizer.transform([cleaned_text])
+                
+                # Predict
+                prediction = nb_model.predict(vector)[0]
+                probabilities = nb_model.predict_proba(vector)[0]
+                
+                # Decode label
+                label = label_encoder.inverse_transform([prediction])[0]
+                
+                # Simpan ke session state
+                st.session_state.original_text = user_input
+                st.session_state.cleaned_text = cleaned_text
+                st.session_state.cleaning_steps = cleaning_steps
+                st.session_state.probabilities = probabilities
+                st.session_state.model_used = "naive_bayes"
+                st.session_state.analysis_result = {
+                    'label': label,
+                    'confidence': max(probabilities) * 100,
+                    'prediction': prediction
+                }
+                
+            elif "IndoBERT" in selected_model and indobert_available:
+                # ===== INDOBERT =====
+                with st.spinner("🔄 Memproses dengan IndoBERT..."):
+                    result = indobert_classifier(user_input)[0]
+                    
+                    raw_label = result['label']
+                    label = indobert_label_map.get(raw_label, raw_label.lower())
+                    confidence = result['score'] * 100
+                    
+                    # Simpan ke session state
+                    st.session_state.original_text = user_input
+                    st.session_state.cleaned_text = cleaned_text
+                    st.session_state.cleaning_steps = cleaning_steps
+                    st.session_state.probabilities = None  # IndoBERT hanya kasih 1 skor
+                    st.session_state.model_used = "indobert"
+                    st.session_state.analysis_result = {
+                        'label': label,
+                        'confidence': confidence,
+                        'prediction': raw_label
+                    }
+            else:
+                st.error("❌ IndoBERT tidak tersedia. Silakan install transformers dan torch.")
         else:
             st.warning("⚠️ Mohon masukkan teks terlebih dahulu!")
     
@@ -178,18 +303,11 @@ with tab1:
         st.markdown("---")
         st.subheader("✅ Hasil Analisis")
         
-        # Emoji berdasarkan sentimen
-        emoji_map = {
-            'positif': '😊',
-            'negatif': '😢',
-            'netral': '😐'
-        }
-        
-        color_map = {
-            'positif': 'green',
-            'negatif': 'red',
-            'netral': 'orange'
-        }
+        # Show model used
+        if st.session_state.model_used == "naive_bayes":
+            st.caption("Diprediksi dengan: **Naive Bayes + TF-IDF**")
+        else:
+            st.caption("Diprediksi dengan: **IndoBERT**")
         
         emoji = emoji_map.get(result['label'], '🤔')
         color = color_map.get(result['label'], 'gray')
@@ -216,13 +334,14 @@ with tab1:
             # Progress bar untuk confidence
             st.progress(result['confidence'] / 100)
         
-        # Tampilkan probabilitas semua kelas
-        st.markdown("##### Probabilitas per Kelas:")
-        prob_df = pd.DataFrame({
-            'Sentimen': label_encoder.classes_,
-            'Probabilitas': [f"{p*100:.1f}%" for p in st.session_state.probabilities]
-        })
-        st.dataframe(prob_df, use_container_width=True, hide_index=True)
+        # Tampilkan probabilitas semua kelas (hanya untuk Naive Bayes)
+        if st.session_state.model_used == "naive_bayes" and st.session_state.probabilities is not None:
+            st.markdown("##### Probabilitas per Kelas:")
+            prob_df = pd.DataFrame({
+                'Sentimen': label_encoder.classes_,
+                'Probabilitas': [f"{p*100:.1f}%" for p in st.session_state.probabilities]
+            })
+            st.dataframe(prob_df, use_container_width=True, hide_index=True)
 
 # ============================================================
 # TAB 2: PRE-PROCESSING
@@ -233,6 +352,12 @@ with tab2:
     if st.session_state.original_text is None:
         st.info("💡 Lakukan analisis di tab 'Analisis' terlebih dahulu untuk melihat proses pre-processing.")
     else:
+        # Model info
+        if st.session_state.model_used == "naive_bayes":
+            st.caption("Proses untuk: **Naive Bayes + TF-IDF**")
+        else:
+            st.caption("Proses untuk: **IndoBERT** (cleaning hanya untuk referensi)")
+        
         # STEP 1: Text Cleaning
         st.subheader("📌 Step 1: Text Cleaning")
         
@@ -252,62 +377,97 @@ with tab2:
         
         st.markdown("---")
         
-        # STEP 2: TF-IDF Vectorization
-        st.subheader("📌 Step 2: TF-IDF Vectorization")
-        st.markdown("""
-        Teks yang sudah bersih diubah menjadi vektor angka menggunakan **TF-IDF (Term Frequency-Inverse Document Frequency)**.
-        
-        - **TF (Term Frequency)**: Seberapa sering kata muncul dalam dokumen
-        - **IDF (Inverse Document Frequency)**: Seberapa unik kata tersebut di seluruh dataset
-        - **Hasil**: Vektor dengan 6000 fitur (kata/bigram penting)
-        """)
-        
-        # Show vector shape
-        vector = vectorizer.transform([st.session_state.cleaned_text])
-        st.code(f"Shape vektor: {vector.shape} (1 dokumen × 6000 fitur)", language=None)
-        
-        # Show non-zero features
-        non_zero = vector.nnz
-        st.code(f"Jumlah fitur non-zero: {non_zero} kata/bigram terdeteksi", language=None)
-        
-        st.markdown("---")
-        
-        # STEP 3: Model Prediction
-        st.subheader("📌 Step 3: Model Prediction (Naive Bayes)")
-        st.markdown("""
-        Model **Multinomial Naive Bayes** menghitung probabilitas untuk setiap kelas sentimen:
-        """)
-        
-        # Probabilitas
-        probs = st.session_state.probabilities
-        classes = label_encoder.classes_
-        
-        for cls, prob in zip(classes, probs):
-            emoji = emoji_map.get(cls, '🤔')
-            color = color_map.get(cls, 'gray')
-            st.markdown(f"- **{cls.upper()}** {emoji}: `{prob*100:.2f}%`")
-        
-        st.markdown(f"""
-        **Prediksi:** Kelas dengan probabilitas tertinggi = **{classes[probs.argmax()].upper()}**
-        """)
-        
-        st.markdown("---")
-        
-        # STEP 4: Label Decoding
-        st.subheader("📌 Step 4: Label Decoding")
-        st.markdown("""
-        Hasil prediksi model (angka) diubah kembali menjadi label teks:
-        """)
-        
-        result = st.session_state.analysis_result
-        st.code(f"Prediksi Model: {result['prediction']} → Label: '{result['label']}'", language=None)
-        
-        st.markdown("""
-        **Mapping Label Encoder:**
-        - 0 → negatif
-        - 1 → netral  
-        - 2 → positif
-        """)
+        if st.session_state.model_used == "naive_bayes":
+            # STEP 2: TF-IDF Vectorization
+            st.subheader("📌 Step 2: TF-IDF Vectorization")
+            st.markdown("""
+            Teks yang sudah bersih diubah menjadi vektor angka menggunakan **TF-IDF (Term Frequency-Inverse Document Frequency)**.
+            
+            - **TF (Term Frequency)**: Seberapa sering kata muncul dalam dokumen
+            - **IDF (Inverse Document Frequency)**: Seberapa unik kata tersebut di seluruh dataset
+            - **Hasil**: Vektor dengan 6000 fitur (kata/bigram penting)
+            """)
+            
+            # Show vector shape
+            vector = vectorizer.transform([st.session_state.cleaned_text])
+            st.code(f"Shape vektor: {vector.shape} (1 dokumen × 6000 fitur)", language=None)
+            
+            # Show non-zero features
+            non_zero = vector.nnz
+            st.code(f"Jumlah fitur non-zero: {non_zero} kata/bigram terdeteksi", language=None)
+            
+            st.markdown("---")
+            
+            # STEP 3: Model Prediction
+            st.subheader("📌 Step 3: Model Prediction (Naive Bayes)")
+            st.markdown("""
+            Model **Multinomial Naive Bayes** menghitung probabilitas untuk setiap kelas sentimen:
+            """)
+            
+            # Probabilitas
+            if st.session_state.probabilities is not None:
+                probs = st.session_state.probabilities
+                classes = label_encoder.classes_
+                
+                for cls, prob in zip(classes, probs):
+                    emoji = emoji_map.get(cls, '🤔')
+                    st.markdown(f"- **{cls.upper()}** {emoji}: `{prob*100:.2f}%`")
+                
+                st.markdown(f"""
+                **Prediksi:** Kelas dengan probabilitas tertinggi = **{classes[probs.argmax()].upper()}**
+                """)
+            
+            st.markdown("---")
+            
+            # STEP 4: Label Decoding
+            st.subheader("📌 Step 4: Label Decoding")
+            st.markdown("""
+            Hasil prediksi model (angka) diubah kembali menjadi label teks:
+            """)
+            
+            result = st.session_state.analysis_result
+            st.code(f"Prediksi Model: {result['prediction']} → Label: '{result['label']}'", language=None)
+            
+            st.markdown("""
+            **Mapping Label Encoder:**
+            - 0 → negatif
+            - 1 → netral  
+            - 2 → positif
+            """)
+        else:
+            # IndoBERT processing
+            st.subheader("📌 Step 2: Tokenization (IndoBERT)")
+            st.markdown("""
+            IndoBERT menggunakan **WordPiece Tokenization**:
+            
+            - Teks dipecah menjadi sub-kata (subwords)
+            - Setiap token diubah menjadi ID numerik
+            - Ditambahkan token khusus: [CLS] di awal, [SEP] di akhir
+            """)
+            
+            st.markdown("---")
+            
+            st.subheader("📌 Step 3: BERT Encoding")
+            st.markdown("""
+            Model BERT memproses token:
+            
+            - 12 layer transformer
+            - Attention mechanism untuk memahami konteks
+            - Output: representasi vektor 768 dimensi
+            """)
+            
+            st.markdown("---")
+            
+            st.subheader("📌 Step 4: Classification")
+            st.markdown("""
+            Layer klasifikasi di akhir model:
+            
+            - Mengubah representasi BERT → probabilitas kelas
+            - 3 kelas: LABEL_0 (negatif), LABEL_1 (netral), LABEL_2 (positif)
+            """)
+            
+            result = st.session_state.analysis_result
+            st.code(f"Prediksi: {result['prediction']} → Label: '{result['label']}' (Confidence: {result['confidence']:.1f}%)", language=None)
 
 # ============================================================
 # TAB 3: WORD COUNTER
@@ -396,6 +556,6 @@ with tab3:
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: gray; font-size: 12px;">
-    <p>📊 Model: Naive Bayes + TF-IDF | Akurasi: 87% | Dataset: 3263 komentar YouTube tentang MBG</p>
+    <p>📊 Naive Bayes: Akurasi 87% (3263 data MBG) | IndoBERT: Pre-trained model untuk Bahasa Indonesia</p>
 </div>
 """, unsafe_allow_html=True)

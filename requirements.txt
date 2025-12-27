@@ -2,3 +2,5 @@ streamlit
 pandas
 scikit-learn
 nltk
+transformers
+torch
