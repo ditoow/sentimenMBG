@@ -14,6 +14,10 @@ st.set_page_config(
     layout="wide"
 )
 
+# Inisialisasi session_state di awal
+if 'indobert_model_type' not in st.session_state:
+    st.session_state.indobert_model_type = None  # None, 'fine-tuned', atau 'pre-trained'
+
 # ============================================================
 # LOAD NAIVE BAYES MODEL & COMPONENTS
 # ============================================================
