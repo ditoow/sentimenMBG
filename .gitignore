@@ -15,6 +15,7 @@ __pycache__/
 *.pth
 *.safetensors
 models/
+upload_to_hub.py
 
 # IDE
 .vscode/

@@ -29,6 +29,8 @@ nb_model, vectorizer, label_encoder = load_naive_bayes_models()
 # ============================================================
 # LOAD INDOBERT MODEL
 # ============================================================
+HF_MODEL_REPO = "ditoow/indobert-sentimen-mbg"  # Model fine-tuned di HuggingFace Hub
+
 @st.cache_resource
 def load_indobert_model():
     try:
@@ -37,21 +39,31 @@ def load_indobert_model():
         
         local_model_path = "./models/indobert"
         
-        # Cek apakah ada model fine-tuned lokal
-        if os.path.exists(local_model_path) and os.path.exists(os.path.join(local_model_path, "config.json")):
-            print("📂 Loading fine-tuned IndoBERT from local...")
-            model = BertForSequenceClassification.from_pretrained(local_model_path)
-            tokenizer = BertTokenizer.from_pretrained(local_model_path)
+        # Prioritas 1: Load dari HuggingFace Hub (model fine-tuned)
+        try:
+            print(f"🌐 Loading fine-tuned IndoBERT from HuggingFace Hub ({HF_MODEL_REPO})...")
+            model = BertForSequenceClassification.from_pretrained(HF_MODEL_REPO)
+            tokenizer = BertTokenizer.from_pretrained(HF_MODEL_REPO)
             classifier = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
             return classifier, True, "fine-tuned"
-        else:
-            # Pakai pre-trained dari HuggingFace
-            print("🌐 Loading pre-trained IndoBERT from HuggingFace...")
-            classifier = pipeline(
-                "sentiment-analysis",
-                model="mdhugol/indonesia-bert-sentiment-classification"
-            )
-            return classifier, True, "pre-trained"
+        except Exception as hub_error:
+            print(f"⚠️ Gagal load dari Hub: {hub_error}")
+            
+            # Prioritas 2: Load dari lokal jika ada
+            if os.path.exists(local_model_path) and os.path.exists(os.path.join(local_model_path, "config.json")):
+                print("📂 Loading fine-tuned IndoBERT from local...")
+                model = BertForSequenceClassification.from_pretrained(local_model_path)
+                tokenizer = BertTokenizer.from_pretrained(local_model_path)
+                classifier = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
+                return classifier, True, "fine-tuned"
+            else:
+                # Prioritas 3: Fallback ke pre-trained umum
+                print("🌐 Loading pre-trained IndoBERT from HuggingFace...")
+                classifier = pipeline(
+                    "sentiment-analysis",
+                    model="mdhugol/indonesia-bert-sentiment-classification"
+                )
+                return classifier, True, "pre-trained"
     except Exception as e:
         print(f"❌ Error loading IndoBERT: {e}")
         return None, False, None
