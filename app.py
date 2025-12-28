@@ -31,6 +31,11 @@ nb_model, vectorizer, label_encoder = load_naive_bayes_models()
 # ============================================================
 HF_MODEL_REPO = "ditoow/indobert-sentimen-mbg"  # Model fine-tuned di HuggingFace Hub
 
+# Global variables - akan diisi saat user pilih IndoBERT
+indobert_classifier = None
+indobert_available = None  # None = belum dicek, True/False setelah dicek
+indobert_type = None
+
 @st.cache_resource
 def load_indobert_model():
     """Load IndoBERT model - dipanggil hanya saat dibutuhkan (lazy loading)"""
@@ -283,14 +288,18 @@ with tab1:
                 }
                 
             elif "IndoBERT" in selected_model:
-                # ===== INDOBERT (LAZY LOADING dengan st.cache_resource) =====
-                st.info("⏳ Sedang memuat model IndoBERT...")
-                with st.spinner("🔄 Loading IndoBERT model..."):
-                    classifier, available, model_type = load_indobert_model()
+                # ===== INDOBERT (LAZY LOADING) =====
+                global indobert_classifier, indobert_available, indobert_type
                 
-                if classifier is not None:
+                # Load model jika belum di-load
+                if indobert_classifier is None:
+                    st.info("⏳ Sedang memuat model IndoBERT...")
+                    with st.spinner("🔄 Downloading & loading IndoBERT model..."):
+                        indobert_classifier, indobert_available, indobert_type = load_indobert_model()
+                
+                if indobert_classifier is not None:
                     with st.spinner("🔄 Memproses dengan IndoBERT..."):
-                        result = classifier(user_input)[0]
+                        result = indobert_classifier(user_input)[0]
                         
                         raw_label = result['label']
                         label = indobert_label_map.get(raw_label, raw_label.lower())
