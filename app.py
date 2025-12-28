@@ -27,12 +27,18 @@ def load_naive_bayes_models():
 nb_model, vectorizer, label_encoder = load_naive_bayes_models()
 
 # ============================================================
-# LOAD INDOBERT MODEL
+# LOAD INDOBERT MODEL (LAZY LOADING)
 # ============================================================
 HF_MODEL_REPO = "ditoow/indobert-sentimen-mbg"  # Model fine-tuned di HuggingFace Hub
 
+# Global variables - akan diisi saat user pilih IndoBERT
+indobert_classifier = None
+indobert_available = None  # None = belum dicek, True/False setelah dicek
+indobert_type = None
+
 @st.cache_resource
 def load_indobert_model():
+    """Load IndoBERT model - dipanggil hanya saat dibutuhkan (lazy loading)"""
     try:
         from transformers import pipeline, BertForSequenceClassification, BertTokenizer
         import os
@@ -68,7 +74,7 @@ def load_indobert_model():
         print(f"❌ Error loading IndoBERT: {e}")
         return None, False, None
 
-indobert_classifier, indobert_available, indobert_type = load_indobert_model()
+# TIDAK load di awal - akan di-load saat user pilih IndoBERT (lazy loading)
 
 # ============================================================
 # LEXICON KATA SENTIMEN (dari analisis_sentimen.py)
@@ -164,19 +170,14 @@ col_model, col_info = st.columns([2, 3])
 
 with col_model:
     model_options = ["Naive Bayes + TF-IDF"]
-    if indobert_available:
-        if indobert_type == "fine-tuned":
-            model_options.append("IndoBERT (Fine-tuned)")
-        else:
-            model_options.append("IndoBERT (Pre-trained)")
-    else:
-        model_options.append("IndoBERT (Tidak tersedia)")
+    # IndoBERT selalu tersedia sebagai opsi (akan di-load saat dipilih)
+    model_options.append("IndoBERT (HuggingFace)")
     
     selected_model = st.selectbox(
         "🤖 Pilih Model:",
         model_options,
         index=0,
-        help="Pilih model yang akan digunakan untuk analisis sentimen"
+        help="Pilih model yang akan digunakan untuk analisis sentimen. IndoBERT akan di-load saat pertama kali dipilih."
     )
 
 
@@ -286,26 +287,37 @@ with tab1:
                     'prediction': prediction
                 }
                 
-            elif "IndoBERT" in selected_model and indobert_available:
-                # ===== INDOBERT =====
-                with st.spinner("🔄 Memproses dengan IndoBERT..."):
-                    result = indobert_classifier(user_input)[0]
-                    
-                    raw_label = result['label']
-                    label = indobert_label_map.get(raw_label, raw_label.lower())
-                    confidence = result['score'] * 100
-                    
-                    # Simpan ke session state
-                    st.session_state.original_text = user_input
-                    st.session_state.cleaned_text = cleaned_text
-                    st.session_state.cleaning_steps = cleaning_steps
-                    st.session_state.probabilities = None  # IndoBERT hanya kasih 1 skor
-                    st.session_state.model_used = "indobert"
-                    st.session_state.analysis_result = {
-                        'label': label,
-                        'confidence': confidence,
-                        'prediction': raw_label
-                    }
+            elif "IndoBERT" in selected_model:
+                # ===== INDOBERT (LAZY LOADING) =====
+                global indobert_classifier, indobert_available, indobert_type
+                
+                # Load model jika belum di-load
+                if indobert_classifier is None:
+                    st.info("⏳ Sedang memuat model IndoBERT...")
+                    with st.spinner("🔄 Downloading & loading IndoBERT model..."):
+                        indobert_classifier, indobert_available, indobert_type = load_indobert_model()
+                
+                if indobert_classifier is not None:
+                    with st.spinner("🔄 Memproses dengan IndoBERT..."):
+                        result = indobert_classifier(user_input)[0]
+                        
+                        raw_label = result['label']
+                        label = indobert_label_map.get(raw_label, raw_label.lower())
+                        confidence = result['score'] * 100
+                        
+                        # Simpan ke session state
+                        st.session_state.original_text = user_input
+                        st.session_state.cleaned_text = cleaned_text
+                        st.session_state.cleaning_steps = cleaning_steps
+                        st.session_state.probabilities = None  # IndoBERT hanya kasih 1 skor
+                        st.session_state.model_used = "indobert"
+                        st.session_state.analysis_result = {
+                            'label': label,
+                            'confidence': confidence,
+                            'prediction': raw_label
+                        }
+                else:
+                    st.error("❌ Gagal load IndoBERT. Coba pilih Naive Bayes.")
             else:
                 st.error("❌ IndoBERT tidak tersedia. Silakan install transformers dan torch.")
         else:
