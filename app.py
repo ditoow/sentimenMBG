@@ -170,14 +170,20 @@ col_model, col_info = st.columns([2, 3])
 
 with col_model:
     model_options = ["Naive Bayes + TF-IDF"]
-    # IndoBERT selalu tersedia sebagai opsi (akan di-load saat dipilih)
-    model_options.append("IndoBERT (HuggingFace)")
+    
+    # IndoBERT label berdasarkan model_type yang sudah di-load
+    if st.session_state.indobert_model_type == "fine-tuned":
+        model_options.append("IndoBERT (Fine-tuned)")
+    elif st.session_state.indobert_model_type == "pre-trained":
+        model_options.append("IndoBERT (Pre-trained)")
+    else:
+        model_options.append("IndoBERT")  # Belum di-load
     
     selected_model = st.selectbox(
         "🤖 Pilih Model:",
         model_options,
         index=0,
-        help="Pilih model yang akan digunakan untuk analisis sentimen. IndoBERT akan di-load saat pertama kali dipilih."
+        help="IndoBERT akan di-load saat pertama kali dipilih. Fine-tuned dari ditoow/indobert-sentimen-mbg."
     )
 
 
@@ -202,6 +208,8 @@ if 'original_text' not in st.session_state:
     st.session_state.original_text = None
 if 'model_used' not in st.session_state:
     st.session_state.model_used = None
+if 'indobert_model_type' not in st.session_state:
+    st.session_state.indobert_model_type = None  # None, 'fine-tuned', atau 'pre-trained'
 
 # Emoji dan color maps
 emoji_map = {
@@ -288,18 +296,16 @@ with tab1:
                 }
                 
             elif "IndoBERT" in selected_model:
-                # ===== INDOBERT (LAZY LOADING) =====
-                global indobert_classifier, indobert_available, indobert_type
+                # ===== INDOBERT (LAZY LOADING dengan @st.cache_resource) =====
+                st.info("⏳ Sedang memuat model IndoBERT...")
+                classifier, available, model_type = load_indobert_model()
                 
-                # Load model jika belum di-load
-                if indobert_classifier is None:
-                    st.info("⏳ Sedang memuat model IndoBERT...")
-                    with st.spinner("🔄 Downloading & loading IndoBERT model..."):
-                        indobert_classifier, indobert_available, indobert_type = load_indobert_model()
+                # Simpan model_type ke session_state untuk update dropdown
+                st.session_state.indobert_model_type = model_type
                 
-                if indobert_classifier is not None:
+                if classifier is not None:
                     with st.spinner("🔄 Memproses dengan IndoBERT..."):
-                        result = indobert_classifier(user_input)[0]
+                        result = classifier(user_input)[0]
                         
                         raw_label = result['label']
                         label = indobert_label_map.get(raw_label, raw_label.lower())
@@ -310,12 +316,14 @@ with tab1:
                         st.session_state.cleaned_text = cleaned_text
                         st.session_state.cleaning_steps = cleaning_steps
                         st.session_state.probabilities = None  # IndoBERT hanya kasih 1 skor
-                        st.session_state.model_used = "indobert"
+                        st.session_state.model_used = f"indobert_{model_type}"  # fine-tuned atau pre-trained
                         st.session_state.analysis_result = {
                             'label': label,
                             'confidence': confidence,
                             'prediction': raw_label
                         }
+                        # Rerun untuk update dropdown label
+                        st.rerun()
                 else:
                     st.error("❌ Gagal load IndoBERT. Coba pilih Naive Bayes.")
             else:
@@ -333,6 +341,10 @@ with tab1:
         # Show model used
         if st.session_state.model_used == "naive_bayes":
             st.caption("Diprediksi dengan: **Naive Bayes + TF-IDF**")
+        elif "fine-tuned" in str(st.session_state.model_used):
+            st.caption("Diprediksi dengan: **IndoBERT (Fine-tuned)**")
+        elif "pre-trained" in str(st.session_state.model_used):
+            st.caption("Diprediksi dengan: **IndoBERT (Pre-trained)**")
         else:
             st.caption("Diprediksi dengan: **IndoBERT**")
         
