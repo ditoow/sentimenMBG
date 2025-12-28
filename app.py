@@ -153,7 +153,10 @@ col_model, col_info = st.columns([2, 3])
 with col_model:
     model_options = ["Naive Bayes + TF-IDF"]
     if indobert_available:
-        model_options.append("IndoBERT (Pre-trained)")
+        if indobert_type == "fine-tuned":
+            model_options.append("IndoBERT (Fine-tuned)")
+        else:
+            model_options.append("IndoBERT (Pre-trained)")
     else:
         model_options.append("IndoBERT (Tidak tersedia)")
     
